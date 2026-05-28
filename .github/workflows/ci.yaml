@@ -21,7 +21,15 @@ jobs:
             echo "ERROR: openapi.yaml not found!"
             exit 1
           fi
-          echo "openapi.yaml found ✓"
+          for ep in "/health" "/" ; do
+            if grep -q "^  ${ep}:" openapi.yaml || grep -q "\"${ep}\"" openapi.yaml; then
+              echo "✓ ${ep} endpoint found"
+            else
+              echo "ERROR: ${ep} endpoint missing from openapi.yaml"
+              exit 1
+            fi
+          done
+          echo "openapi.yaml validated ✓"
 
   # ── Step 2: Build smoke test ──
   build-smoke:
@@ -34,10 +42,21 @@ jobs:
       - name: Smoke test /health
         run: |
           docker run -d --name plugin-test -e PORT=8080 -e PLUGIN_NAME=${{ env.PLUGIN_NAME }} -p 8080:8080 plugin-smoke
-          sleep 3
-          curl -sf http://localhost:8080/health | python -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', f'Bad status: {d}'; print('Health OK ✓')"
-          docker logs plugin-test 2>&1 | tail -5
+          for i in $(seq 1 10); do
+            if curl -sf http://localhost:8080/health > /tmp/health_response 2>/dev/null; then
+              echo "Health endpoint ready ✓"
+              cat /tmp/health_response | python -c "import sys,json; d=json.load(sys.stdin); assert d['status']=='ok', f'Bad status: {d}'; print('Health OK ✓')"
+              docker logs plugin-test 2>&1 | tail -5
+              docker stop plugin-test && docker rm plugin-test
+              exit 0
+            fi
+            echo "Attempt $i/10 - waiting for /health..."
+            sleep 2
+          done
+          echo "=== Container logs ==="
+          docker logs plugin-test 2>&1
           docker stop plugin-test && docker rm plugin-test
+          exit 1
 
   # ── Step 3: Unit tests ──
   unit-test:
@@ -51,7 +70,6 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: |
-          pip install -r requirements.txt
-          pip install pytest httpx pytest-cov
+          pip install -e ".[dev]"
       - name: Run tests
         run: pytest tests/ -v --cov=app --cov-report=term-missing
