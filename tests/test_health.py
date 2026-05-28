@@ -1,13 +1,12 @@
 import pytest
-from httpx import Client, ASGITransport
 from app.main import app
 
 
 @pytest.fixture
 def client():
-    transport = ASGITransport(app=app)
-    with Client(transport=transport, base_url="http://test") as c:
-        yield c
+    """Use FastAPI TestClient for proper ASGI support."""
+    from fastapi.testclient import TestClient
+    return TestClient(app)
 
 
 def test_health_returns_ok(client):
